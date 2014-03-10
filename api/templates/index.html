@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=7,IE=9">
+  <meta name="viewport" content="initial-scale=1, maximum-scale=1,user-scalable=no">
+  <title>Multiple Routing</title>
+  <link rel="stylesheet" type="text/css" href="http://js.arcgis.com/3.8/js/esri/css/esri.css">
+  <link rel="stylesheet" href="static/css/examples.css">
+  <script src="//ajax.googleapis.com/ajax/libs/jquery/1.11.0/jquery.min.js" ></script>
+  <!-- Load the library references for ArcGIS API for JavaScript-->
+  <!--script src="http://serverapi.arcgisonline.com/jsapi/arcgis/3.5/"></script-->
+  <script src="http://js.arcgis.com/3.8/"></script>
+  <script>
+    var city_to_data_lookup = {};
+    var cities = [];
+    var lines_to_draw = [];
+    
+    
+    var global_update_lines;
+    
+    
+     require(["esri/map", 
+        "esri/tasks/RouteTask", 
+        "esri/tasks/RouteParameters", 
+        "esri/tasks/FeatureSet", 
+        "esri/SpatialReference",
+        "esri/units", 
+        "esri/symbols/SimpleLineSymbol", 
+        "esri/graphic", 
+        "esri/config",
+        "esri/geometry/webMercatorUtils",
+        "esri/InfoTemplate", 
+        "esri/geometry/Point", 
+        "esri/geometry/Multipoint", 
+        "esri/geometry/Polyline",
+        "esri/geometry/Polygon",
+        "esri/symbols/SimpleMarkerSymbol", 
+        "esri/symbols/SimpleFillSymbol", 
+        "static/js/utils.js", 
+        "dojo/_base/Color", 
+        "dojo/_base/array", 
+        "dojo/on", 
+        "dojo/_base/connect", 
+        "dojo/dom", 
+        "dojo/domReady!"],   
+        function(Map, RouteTask, RouteParameters, FeatureSet, SpatialReference, Units, SimpleLineSymbol, Graphic, config, webMercatorUtils, InfoTemplate, Point, Multipoint, Polyline, Polygon, SimpleMarkerSymbol, SimpleFillSymbol, utils, Color, array, on, conn, dom) {  
+          "use strict"
+          
+          var routeTask, routeParams, routes = [];
+          var stopSymbol, routeSymbols;
+          var mapOnClick_addStops_connect;
+        var pointSymbol,lineSymbol,polygonSymbol;
+        var multiPointGraphic,polylineGraphic,polygonGraphic, multiPoint;
+        var pts, activeToolId;
+        var line_graphics = [];
+        lineSymbol = createLineSymbol();
+
+          //config.defaults.io.proxyUrl = "http://developers.arcgis.com/sproxy";
+          //config.defaults.io.proxyUrl = "/proxy";
+
+          // Create map
+          var map = new Map("mapDiv", {
+            basemap: "streets",
+            center: [-116.615644, 33.753780],
+            zoom: 5
+          });
+
+          utils.autoRecenter(map);
+
+          // Create route task
+          routeTask = new RouteTask("http://tasks.arcgisonline.com/ArcGIS/rest/services/NetworkAnalysis/ESRI_Route_NA/NAServer/Route");
+          routeParams = new RouteParameters();
+          routeParams.stops = new FeatureSet();
+          routeParams.outSpatialReference = {"wkid":102100};
+          // Wire events
+          on(routeTask, "solve-complete", showRoute);
+          on(routeTask, "error", errorHandler);
+
+          // Wire UI events
+          on(dom.byId("btnAddStops"), "click", addStops);
+          on(dom.byId("btnSolveRoute"), "click", solveRoute);
+          on(dom.byId("btnClearRoutes"), "click", clearAll);
+
+          // Create symbols
+          stopSymbol = utils.createPictureSymbol("static/images/blue-pin.png", 0, 12, 13, 24); 
+          routeSymbols = {
+            "Route 1": new SimpleLineSymbol().setColor(new Color([0,0,255,0.5])).setWidth(5),
+            "Route 2": new SimpleLineSymbol().setColor(new Color([0,255,0,0.5])).setWidth(5),
+            "Route 3": new SimpleLineSymbol().setColor(new Color([255,0,255,0.5])).setWidth(5)
+          };
+
+          //Begins listening for click events to add stops
+          function addStops() {
+            removeEventHandlers();
+            mapOnClick_addStops_connect = conn.connect(map, "onClick", addStop);
+          }
+
+          //Clears all stops
+          function clearStops() {
+            removeEventHandlers();
+            cities = [];
+            
+            map.infoWindow.hide();
+            map.graphics.clear();
+            multiPointGraphic = null;
+            polylineGraphic = null;
+            polygonGraphic = null;
+            pts = null;
+          }
+
+          //Adds a stop. The stop is associated with the route currently displayed in the dropdown
+          function addStop(evt) {
+            var coor = webMercatorUtils.webMercatorToGeographic(evt.mapPoint);
+            var city_name = makeid();
+            cities.push(city_name);
+            city_to_data_lookup[city_name] = {
+                "mapPoint": evt.mapPoint,
+                "geo": {
+                    "long": coor.x,
+                    "lat": coor.y
+                }
+            };
+            routeParams.stops.features.push(
+              map.graphics.add(
+                new Graphic(
+                  evt.mapPoint,
+                  stopSymbol,
+                  { RouteName:"MainRoute" }
+                )
+              )
+            );
+          map.infoWindow.hide();
+          }
+
+          //Stops listening for click events to add stops
+          function removeEventHandlers() {
+            conn.disconnect(mapOnClick_addStops_connect);
+          }
+
+          //Solves the routes. Any errors will trigger the errorHandler function.
+          function solveRoute() {
+            if (cities.length <= 0) {
+                alert("Error - must have at least two stops to determine best route!");
+            }
+            else {
+                removeEventHandlers();
+                console.log("solving...", cities);
+                var post_data = [];
+                var total_cities = cities.length;
+                for (var i = 0; i < total_cities; i++) {
+                    var d = {};
+                    d[cities[i]] = [
+                        city_to_data_lookup[cities[i]].geo.lat,
+                        city_to_data_lookup[cities[i]].geo.long
+                    ];
+                    post_data.push(d);
+                }
+                console.log("calculating for... ", post_data);
+                jQuery.ajax({
+                    type: "POST",
+                    dataType: "json",
+                    url: "/calculate/",
+                    data: {"data": JSON.stringify(post_data)},
+                    success: function (data) {
+                        console.log("CALCULATED", data);
+                        lines_to_draw = data.data;
+                        utils.setStyle("progress", "progress hidden");
+                        updateLines();
+                    },
+                    error: function (e) {
+                        console.log('error', e);
+                    }
+                });
+                
+                utils.setStyle("progress", "progress");
+            }
+          }
+          
+          function updateLines(){
+                if (lines_to_draw.length > 0) {
+                    var data = lines_to_draw.shift();
+                    console.log("updating best", data);
+                    //clear lines
+                    for (var i=line_graphics.length-1; i>=0; i--) {
+                      map.graphics.remove(line_graphics.splice(i, 1)[0]);
+                    }
+                    map.infoWindow.hide();
+                    multiPointGraphic = null;
+                    polylineGraphic = null;
+                    polygonGraphic = null;
+                    pts = null;
+                    
+                    jQuery("#best_cost").html("Total Distance: "+data.cost);
+                    var total_cities = data.solution.length;
+                    for (var i = 0; i < total_cities; i++) {
+                        addLine(city_to_data_lookup[data.solution[i]]['mapPoint'], false);
+                    }
+                    utils.setStyle("progress", "progress hidden");
+                        
+                    setTimeout("global_update_lines()", 300);
+                }
+                
+          }
+          global_update_lines = updateLines;
+          
+        function addTempPoint(pt) {
+          if (!multiPointGraphic) {
+            multiPoint = new Multipoint(pt.spatialReference);
+            multiPoint.addPoint(pt);
+            multiPointGraphic = new Graphic(multiPoint,pointSymbol);
+            line_graphics.push(map.graphics.add(multiPointGraphic));
+          }
+          else {
+            multiPoint.addPoint(pt);
+            multiPointGraphic.setGeometry(multiPoint);
+          }
+        }
+          
+        function addLine(pt, finished) {
+            //pt = evt.mapPoint
+            //finished = true / false
+          if (!pts) pts = [];
+          pts.push(pt);
+          // Add a temporary point
+          addTempPoint(pt);
+          // Create the line and graphic
+          if (pts.length > 1) {
+            var polyline = new Polyline(pt.spatialReference);
+            polyline.addPath(pts);
+            if (!polylineGraphic) {
+                console.log(1);
+              polylineGraphic = new Graphic(polyline,lineSymbol);
+              line_graphics.push(map.graphics.add(polylineGraphic));
+            } else {
+                console.log(2);
+              polylineGraphic.setGeometry(polyline);
+            }
+          }
+          if (finished && pts.length > 1) {
+            var infoTemplate = new InfoTemplate("My Line","Points: "+ pts.length);
+            polylineGraphic.setInfoTemplate(infoTemplate);
+            polylineGraphic = null;
+            map.graphics.remove(multiPointGraphic);
+            multiPointGraphic = null;
+            pts = null;
+            }
+          }
+
+        function createLineSymbol() {
+          return new SimpleLineSymbol(SimpleLineSymbol.STYLE_SOLID, 
+            new Color([255, 0, 0, 0.75]), 
+            2);
+        }
+
+          //Clears all routes
+          function clearRoutes() {
+            for (var i=routes.length-1; i>=0; i--) {
+              map.graphics.remove(routes.splice(i, 1)[0]);
+            }
+            routes = [];
+          }
+
+          //Clear all
+          function clearAll() {
+            clearRoutes();
+            clearStops();
+          }
+
+          //Draws the resulting routes on the map
+          function showRoute(solveResult) {
+            solveResult = solveResult.result; // 3.5
+            clearRoutes();
+            utils.setStyle("progress", "progress hidden");
+            array.forEach(solveResult.routeResults, function(routeResult, i) {
+              routes.push(
+                map.graphics.add(
+                  routeResult.route.setSymbol(routeSymbols[routeResult.routeName])
+                )
+              );
+              routeResult.route.getDojoShape().moveToBack();
+            });
+
+            var msgs = ["Server messages:"];
+            array.forEach(solveResult.messages, function(message) {
+              msgs.push(message.type + " : " + message.description);
+            });
+            if (msgs.length > 1) {
+              alert(msgs.join("\n - "));
+            }
+          }
+
+          //Reports any errors that occurred during the solve
+          function errorHandler(err) {
+            utils.setStyle("progress", "progress hidden");
+            alert("An error occured\n" + err.message + "\n" + err.details.join("\n"));
+          }
+        }
+      );
+function makeid()
+{
+    var text = "";
+    var possible = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+
+    for( var i=0; i < 15; i++ )
+        text += possible.charAt(Math.floor(Math.random() * possible.length));
+
+    return text;
+}
+    </script>
+  </head>
+  <body>
+    <div class="panel">
+      <div class="titlearea"><span id="titleMessage" class="title-message">Traveling Salesman Problem</span></div>
+      <div class="controls">
+        <div class="buttons"> 
+          <button id="btnAddStops" class="btn btn-primary">Add Stops</button><button id="btnClearRoutes" class="btn btn-secondary">Clear</button></br>
+          <button id="btnSolveRoute" class="btn btn-primary">Compute Best Route via Genetic Algorithm</button>
+        </div>
+      </div>
+      <div class="message"><span id="userMessage" class="user-message">Click "Add Stops", then click the map to add points for the salesman to travel to.</span><br><span id="best_cost" style="font-weight: bold"></span></div>
+    </div>
+    <div id="mapDiv"></div>
+    <div id="progress" class="progress hidden"></div>
+  </body>
+</html>

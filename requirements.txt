@@ -1,0 +1,16 @@
+Django==1.6
+dj-database-url==0.2.2
+dj-static==0.0.5
+gunicorn==18.0
+psycopg2==2.5.1
+static==0.4
+wsgiref==0.1.2
+django-filter==0.7
+django-salesforce==0.2.0.1
+djangorestframework==2.3.12
+setuptools-git==1.0
+oauth2==1.5.211
+httplib2==0.8
+restkit==4.2.2
+pytz==2012d
+simple-salesforce==0.62.0
